@@ -156,8 +156,62 @@ export default function Page() {
     paybackTargetYears: 3,
   });
 
-  // Attachments (paste S3 keys / URLs)
+  // Attachments
+
+      {/* Attachments */}
+      <div className="card">
+        <h2>Attachments (optional)</h2>
+        <div className="muted" style={{ marginBottom: 8 }}>
+          Paste S3 keys or file URLs (one per line), or upload files directly from your computer.<br />
+          <code>sess_123/asbuilt.pdf</code>, <code>https://…/singleline.pdf</code>
+        </div>
+
+        <textarea
+          className="col2"
+          rows={6}
+          placeholder="One key or URL per line…"
+          value={fileListRaw}
+          onChange={e => setFileListRaw(e.target.value)}
+          aria-label="Attachment keys or URLs"
+        />
+
+        <div style={{ marginTop: 12 }}>
+          <label className="btn" style={{ display: 'inline-block' }}>
+            <input
+              type="file"
+              multiple
+              onChange={handleFileChange}
+              disabled={uploadBusy}
+              style={{ display: 'none' }}
+            />
+            {uploadBusy ? 'Uploading…' : 'Upload files from computer'}
+          </label>
+          {Object.keys(uploadProgress).length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              {Object.entries(uploadProgress).map(([name, pct]) => (
+                <div key={name} style={{ margin: '6px 0' }}>
+                  <div style={{ fontSize: 12 }}>{name}</div>
+                  <div style={{ height: 6, background: '#eee', borderRadius: 4 }}>
+                    <div style={{ height: 6, width: `${pct}%`, borderRadius: 4, background: '#9ca3af' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {uploadMsg && (
+            <div role="status" aria-live="polite" className="muted" style={{ marginTop: 8 }}>
+              {uploadMsg}
+            </div>
+          )}
+        </div>
+      </div>
+ (paste S3 keys / URLs)
   const [fileListRaw, setFileListRaw] = useState<string>('');
+  // Upload UI state
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+
 
   // ---------- run / status / results ----------
   const [busy, setBusy] = useState(false);
@@ -175,6 +229,56 @@ export default function Page() {
   }, [isSessionReady, customer.name, customer.email, facility.area_m2, energy.annual_kwh]);
 
   // ---------- actions ----------
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploadBusy(true);
+    setUploadMsg(null);
+    setUploadProgress({});
+
+    try {
+      const uploaded: string[] = [];
+      for (const f of Array.from(files)) {
+        // Request a pre-signed PUT URL from our API
+        const res = await fetch(`/api/upload?filename=${encodeURIComponent(f.name)}&type=${encodeURIComponent(f.type || 'application/octet-stream')}`);
+        if (!res.ok) throw new Error(`Failed to get signed URL for ${f.name}`);
+        const { url, key } = (await res.json()) as { url: string; key: string };
+
+        // Upload directly from the user's computer to S3 with progress
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', url);
+          xhr.setRequestHeader('Content-Type', f.type || 'application/octet-stream');
+          xhr.upload.onprogress = evt => {
+            if (evt.lengthComputable) {
+              setUploadProgress(p => ({ ...p, [f.name]: Math.round((evt.loaded / evt.total) * 100) }));
+            }
+          };
+          xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`S3 error ${xhr.status}`)));
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.send(f);
+        });
+
+        uploaded.push(key);
+      }
+
+      // Merge with any existing entries, de-dupe
+      const merged = Array.from(new Set([
+        ...fileListRaw.split('\n').map(s => s.trim()).filter(Boolean),
+        ...uploaded
+      ])).join('\n');
+      setFileListRaw(merged);
+      setUploadMsg(`Uploaded ${uploaded.length} file(s).`);
+    } catch (err: any) {
+      console.error(err);
+      setUploadMsg(err?.message ?? 'Upload failed.');
+    } finally {
+      if (e.target) e.target.value = '';
+      setUploadBusy(false);
+    }
+  }
+
   function parseFiles(): string[] {
     return fileListRaw
       .split('\n')
@@ -506,55 +610,56 @@ export default function Page() {
         </div>
       </div>
 
-{/* Attachments */}
+// Attachments
+
+      {/* Attachments */}
       <div className="card">
         <h2>Attachments (optional)</h2>
         <div className="muted" style={{ marginBottom: 8 }}>
-          Paste uploaded S3 keys or file URLs (one per line). Examples:<br />
+          Paste S3 keys or file URLs (one per line), or upload files directly from your computer.<br />
           <code>sess_123/asbuilt.pdf</code>, <code>https://…/singleline.pdf</code>
         </div>
+
         <textarea
           className="col2"
-          rows={4}
+          rows={6}
           placeholder="One key or URL per line…"
           value={fileListRaw}
           onChange={e => setFileListRaw(e.target.value)}
+          aria-label="Attachment keys or URLs"
         />
-      </div>      
 
-  <input
-    type="file"
-    multiple
-    onChange={async e => {
-      const files = e.target.files;
-      if (!files) return;
+        <div style={{ marginTop: 12 }}>
+          <label className="btn" style={{ display: 'inline-block' }}>
+            <input
+              type="file"
+              multiple
+              onChange={handleFileChange}
+              disabled={uploadBusy}
+              style={{ display: 'none' }}
+            />
+            {uploadBusy ? 'Uploading…' : 'Upload files from computer'}
+          </label>
+          {Object.keys(uploadProgress).length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              {Object.entries(uploadProgress).map(([name, pct]) => (
+                <div key={name} style={{ margin: '6px 0' }}>
+                  <div style={{ fontSize: 12 }}>{name}</div>
+                  <div style={{ height: 6, background: '#eee', borderRadius: 4 }}>
+                    <div style={{ height: 6, width: `${pct}%`, borderRadius: 4, background: '#9ca3af' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {uploadMsg && (
+            <div role="status" aria-live="polite" className="muted" style={{ marginTop: 8 }}>
+              {uploadMsg}
+            </div>
+          )}
+        </div>
+      </div>
 
-      const uploaded: string[] = [];
-      for (const f of Array.from(files)) {
-        // Call backend to get signed URL
-        const res = await fetch(`/api/upload?filename=${encodeURIComponent(f.name)}`);
-        const { url, key } = await res.json();
-
-        // Upload to S3
-        await fetch(url, {
-          method: 'PUT',
-          headers: { 'Content-Type': f.type },
-          body: f,
-        });
-
-        uploaded.push(key);
-      }
-      setFileListRaw(uploaded.join('\n'));
-    }}
-  />
-  <textarea
-    className="col2"
-    rows={4}
-    placeholder="Uploaded file keys will appear here"
-    value={fileListRaw}
-    readOnly
-  />
-</div>
 
       {/* Status */}
       {status.kind !== 'idle' && (
